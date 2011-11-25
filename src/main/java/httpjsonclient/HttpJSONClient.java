@@ -1,5 +1,6 @@
 package httpjsonclient;
 
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,13 +13,18 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.GZIPInputStream;
+
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+
 import org.apache.commons.io.IOUtils;
 import org.apache.http.Header;
 import org.apache.http.HeaderElement;
@@ -45,6 +51,7 @@ import org.apache.http.conn.scheme.SchemeRegistry;
 import org.apache.http.conn.scheme.SchemeSocketFactory;
 import org.apache.http.conn.ssl.SSLSocketFactory;
 import org.apache.http.entity.HttpEntityWrapper;
+import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.DefaultConnectionKeepAliveStrategy;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.impl.conn.tsccm.ThreadSafeClientConnManager;
@@ -55,12 +62,18 @@ import org.apache.http.params.HttpParams;
 import org.apache.http.protocol.ExecutionContext;
 import org.apache.http.protocol.HTTP;
 import org.apache.http.protocol.HttpContext;
+import org.apache.log4j.Logger;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import com.linkedin.data.template.RecordTemplate;
 
 
 public class HttpJSONClient
 {
+  static Logger log = Logger.getLogger(HttpJSONClient.class);
+
   String _scheme;
   String _host;
   int _port;
@@ -155,7 +168,7 @@ public class HttpJSONClient
     throws NoSuchAlgorithmException, KeyManagementException, IOException
   {
     HttpParams params = new BasicHttpParams();
-    params.setParameter(CoreConnectionPNames.CONNECTION_TIMEOUT, 1000);
+    params.setParameter(CoreConnectionPNames.CONNECTION_TIMEOUT, 30000);
 
     SchemeRegistry registry = new SchemeRegistry();
     SchemeSocketFactory sf;
@@ -304,7 +317,40 @@ public class HttpJSONClient
 
   }
 
+  public JSONObject doQuery()
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doQuery(Collections.<NameValuePair>emptyList());
+  }
+
   public JSONObject doQuery(List<NameValuePair> queryParams)
+    throws URISyntaxException, IOException, JSONException
+  {
+    URI requestURI = buildRequestURI(queryParams);
+    HttpResponse response = makeGetRequest(requestURI);
+    JSONObject result = transformResponseToJSONObject(response);
+    return result;
+  }
+
+  public JSONObject doPost(List<NameValuePair> nameValuePairs)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPost(nameValuePairs, Collections.<NameValuePair>emptyList(), Collections.<String, String>emptyMap());
+  }
+
+  public JSONObject doPost(List<NameValuePair> nameValuePairs, List<NameValuePair> queryParams)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPost(nameValuePairs, queryParams, Collections.<String, String>emptyMap());
+  }
+
+  public JSONObject doPost(List<NameValuePair> nameValuePairs, Map<String,String> headers)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPost(nameValuePairs, Collections.<NameValuePair>emptyList(), headers);
+  }
+
+  public JSONObject doPost(List<NameValuePair> nameValuePairs, List<NameValuePair> queryParams, Map<String,String> headers)
     throws URISyntaxException, IOException, JSONException
   {
     JSONObject result;
@@ -313,8 +359,9 @@ public class HttpJSONClient
     try
     {
       URI requestURI = buildRequestURI(queryParams);
-      is = makeGetRequest(requestURI);
-      result = convertStreamToJSONObject(is);
+      HttpResponse response = makePostRequest(requestURI, nameValuePairs, headers);
+      is = response.getEntity().getContent();
+      result = transformResponseToJSONObject(response);
     }
     finally
     {
@@ -327,26 +374,43 @@ public class HttpJSONClient
     return result;
   }
 
-  public JSONObject doPost(List<NameValuePair> nameValuePairs)
+  public <T extends RecordTemplate> JSONObject doPost(T record)
     throws URISyntaxException, IOException, JSONException
   {
-    JSONObject result;
-    InputStream is = null;
+    String data = Util.prettyToString(Util.toJSON(record));
+    return doPost(data);
+  }
 
-    try
-    {
-      URI requestURI = buildRequestURI();
-      is = makePostRequest(requestURI, nameValuePairs);
-      result = convertStreamToJSONObject(is);
-    }
-    finally
-    {
-      if (is != null)
-      {
-    	  IOUtils.closeQuietly(is);
-      }
-    }
+  public JSONObject doPost(JSONObject data)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPost(data.toString(2), Collections.<String, String>emptyMap());
+  }
 
+  public JSONObject doPost(JSONObject data, List<NameValuePair> queryParams)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPost(data.toString(2), Collections.<String, String>emptyMap(), queryParams);
+  }
+
+  public JSONObject doPost(String data)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPost(data, Collections.<String, String>emptyMap());
+  }
+
+  public JSONObject doPost(String data, Map<String,String> headers)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPost(data, headers, Collections.<NameValuePair>emptyList());
+  }
+
+  public JSONObject doPost(String data, Map<String,String> headers, List<NameValuePair> queryParams)
+    throws URISyntaxException, IOException, JSONException
+  {
+    URI requestURI = buildRequestURI(queryParams);
+    HttpResponse response = makePostRequest(requestURI, data, headers);
+    JSONObject result = transformResponseToJSONObject(response);
     return result;
   }
 
@@ -370,10 +434,10 @@ public class HttpJSONClient
     return uri;
   }
 
-  public InputStream makeGetRequest(URI uri)
+  private HttpResponse makeGetRequest(URI uri)
       throws IOException
   {
-	  System.out.println("getting: "+uri);
+	  log.debug("getting: " + uri);
     HttpGet httpget = new HttpGet(uri);
     HttpResponse response = _httpclient.execute(httpget);
     HttpEntity entity = response.getEntity();
@@ -382,23 +446,52 @@ public class HttpJSONClient
       throw new IOException("failed to complete request");
     }
 
-    return entity.getContent();
+    return response;
   }
 
-  public InputStream makePostRequest(URI uri, List<NameValuePair> nameValuePairs)
+  private HttpResponse makePostRequest(URI uri, List<NameValuePair> nameValuePairs)
       throws IOException
   {
-	  System.out.println("posting: "+uri);
+    return makePostRequest(uri, nameValuePairs, new HashMap<String, String>());
+  }
+
+  private HttpResponse makePostRequest(URI uri, List<NameValuePair> nameValuePairs, Map<String,String> headers)
+      throws IOException
+  {
+    return makePostRequest(uri, new UrlEncodedFormEntity(nameValuePairs), headers);
+  }
+
+  private HttpResponse makePostRequest(URI uri, String data, Map<String,String> headers)
+      throws IOException
+  {
+    StringEntity se = new StringEntity(data, HTTP.UTF_8);
+    se.setContentEncoding("UTF-8");
+    return makePostRequest(uri, se, headers);
+  }
+
+  private HttpResponse makePostRequest(URI uri, HttpEntity entity, Map<String,String> headers)
+      throws IOException
+  {
+	  log.debug("posting: " + uri);
     HttpPost httppost = new HttpPost(uri);
-    httppost.setEntity(new UrlEncodedFormEntity(nameValuePairs));
+    httppost.setEntity(entity);
+
+    for (String key : headers.keySet())
+    {
+      httppost.setHeader(key, headers.get(key));
+    }
+
     HttpResponse response = _httpclient.execute(httppost);
-    HttpEntity entity = response.getEntity();
-    if (entity == null)
+    if(response.getStatusLine().getStatusCode() == 400) {
+    	throw new IOException("Bad Request");
+    }
+    HttpEntity responseEntity = response.getEntity();
+    if (responseEntity == null)
     {
       throw new IOException("failed to complete request");
     }
 
-    return entity.getContent();
+    return response;
   }
 
   public static String join(String[] arr, String delimiter) {
@@ -426,9 +519,8 @@ public class HttpJSONClient
     char[] buf = new char[1024];  //1k buffer
      try
     {
-      while(true){
-    	  int count = reader.read(buf);
-    	  if (count<0) break;
+      int count;
+      while((count = reader.read(buf)) > 0) {
     	  sb.append(buf, 0, count);
       }
     }
@@ -438,15 +530,61 @@ public class HttpJSONClient
     }
 
     String json = sb.toString();
-//    System.out.println("received: "+json);
+    log.debug("received: " + json);
     return json;
   }
 
-  public static JSONObject convertStreamToJSONObject(InputStream is)
+  public static JSONObject transformResponseToJSONObject(HttpResponse response)
       throws IOException, JSONException
   {
-    String rawJSON = convertStreamToString(is);
-    return rawJSON.length() > 0 ? new JSONObject(rawJSON) : new JSONObject();
+    JSONObject result;
+    InputStream is = null;
+
+    try
+    {
+      is = response.getEntity().getContent();
+
+      String rawJSON = convertStreamToString(is).trim();
+      if (rawJSON.length() == 0)
+      {
+        result = new JSONObject();
+      }
+      else
+      {
+        if (rawJSON.startsWith("["))
+        {
+          result = new JSONObject();
+          result.put("elements", new JSONArray(rawJSON));
+        }
+        else
+        {
+          result = new JSONObject(rawJSON);
+        }
+      }
+
+      JSONObject metaResponse = new JSONObject();
+      Iterator<Header> iter = response.headerIterator();
+      while(iter.hasNext())
+      {
+        Header header = iter.next();
+        if (!header.getName().startsWith("X-LinkedIn-")) continue;
+        String name = header.getName().substring("X-LinkedIn-".length());
+        metaResponse.put(name, header.getValue());
+      }
+      if (metaResponse.length() > 0)
+      {
+        result.put("meta", metaResponse);
+      }
+    }
+    finally
+    {
+      if (is != null)
+      {
+    	  IOUtils.closeQuietly(is);
+      }
+    }
+
+    return result;
   }
 
   public void shutdown() {
