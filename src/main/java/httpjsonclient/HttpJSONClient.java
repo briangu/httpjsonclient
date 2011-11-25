@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
 
 import javax.net.ssl.SSLContext;
@@ -62,18 +63,13 @@ import org.apache.http.params.HttpParams;
 import org.apache.http.protocol.ExecutionContext;
 import org.apache.http.protocol.HTTP;
 import org.apache.http.protocol.HttpContext;
-import org.apache.log4j.Logger;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import com.linkedin.data.template.RecordTemplate;
-
 
 public class HttpJSONClient
 {
-  static Logger log = Logger.getLogger(HttpJSONClient.class);
-
   String _scheme;
   String _host;
   int _port;
@@ -374,13 +370,6 @@ public class HttpJSONClient
     return result;
   }
 
-  public <T extends RecordTemplate> JSONObject doPost(T record)
-    throws URISyntaxException, IOException, JSONException
-  {
-    String data = Util.prettyToString(Util.toJSON(record));
-    return doPost(data);
-  }
-
   public JSONObject doPost(JSONObject data)
     throws URISyntaxException, IOException, JSONException
   {
@@ -437,7 +426,6 @@ public class HttpJSONClient
   private HttpResponse makeGetRequest(URI uri)
       throws IOException
   {
-	  log.debug("getting: " + uri);
     HttpGet httpget = new HttpGet(uri);
     HttpResponse response = _httpclient.execute(httpget);
     HttpEntity entity = response.getEntity();
@@ -472,7 +460,6 @@ public class HttpJSONClient
   private HttpResponse makePostRequest(URI uri, HttpEntity entity, Map<String,String> headers)
       throws IOException
   {
-	  log.debug("posting: " + uri);
     HttpPost httppost = new HttpPost(uri);
     httppost.setEntity(entity);
 
@@ -530,7 +517,6 @@ public class HttpJSONClient
     }
 
     String json = sb.toString();
-    log.debug("received: " + json);
     return json;
   }
 
