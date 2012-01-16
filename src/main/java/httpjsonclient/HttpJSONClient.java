@@ -18,7 +18,6 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
 
 import javax.net.ssl.SSLContext;
@@ -41,8 +40,12 @@ import org.apache.http.NameValuePair;
 import org.apache.http.NoHttpResponseException;
 import org.apache.http.client.HttpRequestRetryHandler;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpDelete;
+import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
+import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.client.utils.URIUtils;
 import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.conn.ClientConnectionManager;
@@ -78,6 +81,20 @@ public class HttpJSONClient
   int _maxRetries;
   DefaultHttpClient _httpclient;
   TrustManager _trustManager;
+
+  public static class JSONRequestResponse
+  {
+    public final int StatusCode;
+    public final JSONObject JsonResult;
+    public final HttpResponse HttpResponse;
+
+    public JSONRequestResponse(JSONObject obj, HttpResponse response)
+    {
+      StatusCode = response.getStatusLine().getStatusCode();
+      JsonResult = obj;
+      HttpResponse = response;
+    }
+  }
 
   public static HttpJSONClient create(String url)
       throws IOException, NoSuchAlgorithmException, KeyManagementException
@@ -236,16 +253,19 @@ public class HttpJSONClient
         throws HttpException, IOException
       {
         HttpEntity entity = response.getEntity();
-        Header ceheader = entity.getContentEncoding();
-        if (ceheader != null)
+        if (entity != null)
         {
-          HeaderElement[] codecs = ceheader.getElements();
-          for (int i = 0; i < codecs.length; i++)
+          Header ceheader = entity.getContentEncoding();
+          if (ceheader != null)
           {
-            if (codecs[i].getName().equalsIgnoreCase("gzip"))
+            HeaderElement[] codecs = ceheader.getElements();
+            for (int i = 0; i < codecs.length; i++)
             {
-              response.setEntity(new GzipDecompressingEntity(response.getEntity()));
-              return;
+              if (codecs[i].getName().equalsIgnoreCase("gzip"))
+              {
+                response.setEntity(new GzipDecompressingEntity(response.getEntity()));
+                return;
+              }
             }
           }
         }
@@ -313,43 +333,44 @@ public class HttpJSONClient
 
   }
 
-  public JSONObject doQuery()
+  public JSONRequestResponse doQuery()
     throws URISyntaxException, IOException, JSONException
   {
     return doQuery(Collections.<NameValuePair>emptyList());
   }
 
-  public JSONObject doQuery(List<NameValuePair> queryParams)
+  public JSONRequestResponse doQuery(List<NameValuePair> queryParams)
     throws URISyntaxException, IOException, JSONException
   {
     URI requestURI = buildRequestURI(queryParams);
     HttpResponse response = makeGetRequest(requestURI);
     JSONObject result = transformResponseToJSONObject(response);
-    return result;
+    return new JSONRequestResponse(result, response);
   }
 
-  public JSONObject doPost(List<NameValuePair> nameValuePairs)
+  // POST actions
+  public JSONRequestResponse doPost(List<NameValuePair> nameValuePairs)
     throws URISyntaxException, IOException, JSONException
   {
     return doPost(nameValuePairs, Collections.<NameValuePair>emptyList(), Collections.<String, String>emptyMap());
   }
 
-  public JSONObject doPost(List<NameValuePair> nameValuePairs, List<NameValuePair> queryParams)
+  public JSONRequestResponse doPost(List<NameValuePair> nameValuePairs, List<NameValuePair> queryParams)
     throws URISyntaxException, IOException, JSONException
   {
     return doPost(nameValuePairs, queryParams, Collections.<String, String>emptyMap());
   }
 
-  public JSONObject doPost(List<NameValuePair> nameValuePairs, Map<String,String> headers)
+  public JSONRequestResponse doPost(List<NameValuePair> nameValuePairs, Map<String,String> headers)
     throws URISyntaxException, IOException, JSONException
   {
     return doPost(nameValuePairs, Collections.<NameValuePair>emptyList(), headers);
   }
 
-  public JSONObject doPost(List<NameValuePair> nameValuePairs, List<NameValuePair> queryParams, Map<String,String> headers)
+  public JSONRequestResponse doPost(List<NameValuePair> nameValuePairs, List<NameValuePair> queryParams, Map<String,String> headers)
     throws URISyntaxException, IOException, JSONException
   {
-    JSONObject result;
+    JSONRequestResponse jsonResponse;
     InputStream is = null;
 
     try
@@ -357,7 +378,7 @@ public class HttpJSONClient
       URI requestURI = buildRequestURI(queryParams);
       HttpResponse response = makePostRequest(requestURI, nameValuePairs, headers);
       is = response.getEntity().getContent();
-      result = transformResponseToJSONObject(response);
+      jsonResponse = new JSONRequestResponse(transformResponseToJSONObject(response), response);
     }
     finally
     {
@@ -367,40 +388,143 @@ public class HttpJSONClient
       }
     }
 
-    return result;
+    return jsonResponse;
   }
 
-  public JSONObject doPost(JSONObject data)
+  // DELETE actions
+  public JSONRequestResponse doDelete()
+      throws URISyntaxException, IOException, JSONException
+  {
+    return doDelete(Collections.<String, String>emptyMap());
+  }
+
+  private JSONRequestResponse doDelete(Map<String, String> headers)
+      throws IOException, URISyntaxException, JSONException
+  {
+    return doDelete(headers, Collections.<NameValuePair>emptyList());
+  }
+
+  public JSONRequestResponse doDelete(Map<String,String> headers, List<NameValuePair> queryParams)
+    throws URISyntaxException, IOException, JSONException
+  {
+    URI requestURI = buildRequestURI(queryParams);
+    HttpResponse response = makeDeleteRequest(requestURI, headers);
+    JSONObject result = transformResponseToJSONObject(response);
+
+    return new JSONRequestResponse(result, response);
+  }
+
+  private HttpResponse makeDeleteRequest(URI uri, Map<String,String> headers)
+    throws IOException
+  {
+    HttpDelete request = new HttpDelete(uri);
+    return makeHttpRequest(request, headers);
+  }
+
+
+  // PUT actions
+  public JSONRequestResponse doPut(JSONObject obj)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPut(obj.toString(), Collections.<String, String>emptyMap());
+  }
+
+  public JSONRequestResponse doPut(String data)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPut(data, Collections.<String, String>emptyMap());
+  }
+
+  public JSONRequestResponse doPut(String data, Map<String,String> headers)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPut(data, headers, Collections.<NameValuePair>emptyList());
+  }
+
+  public JSONRequestResponse doPut(String data, Map<String,String> headers, List<NameValuePair> queryParams)
+    throws URISyntaxException, IOException, JSONException
+  {
+    URI requestURI = buildRequestURI(queryParams);
+    HttpResponse response = makePutRequest(requestURI, data, headers);
+    JSONObject result = transformResponseToJSONObject(response);
+    
+    return new JSONRequestResponse(result, response);
+  }
+
+/*
+  public JSONObject doPut(List<NameValuePair> nameValuePairs)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPut(nameValuePairs, Collections.<NameValuePair>emptyList(), Collections.<String, String>emptyMap());
+  }
+
+  public JSONObject doPut(List<NameValuePair> nameValuePairs, List<NameValuePair> queryParams)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPut(nameValuePairs, queryParams, Collections.<String, String>emptyMap());
+  }
+
+  public JSONObject doPut(List<NameValuePair> nameValuePairs, Map<String,String> headers)
+    throws URISyntaxException, IOException, JSONException
+  {
+    return doPut(nameValuePairs, Collections.<NameValuePair>emptyList(), headers);
+  }
+
+  public JSONObject doPut(List<NameValuePair> nameValuePairs, List<NameValuePair> queryParams, Map<String,String> headers)
+    throws URISyntaxException, IOException, JSONException
+  {
+    JSONObject result;
+    InputStream is = null;
+
+    try
+    {
+      URI requestURI = buildRequestURI(queryParams);
+      HttpResponse response = makePutRequest(requestURI, nameValuePairs, headers);
+      is = response.getEntity().getContent();
+      result = transformResponseToJSONObject(response);
+    }
+    finally
+    {
+      if (is != null)
+      {
+        IOUtils.closeQuietly(is);
+      }
+    }
+
+    return result;
+  }
+*/
+
+  public JSONRequestResponse doPost(JSONObject data)
     throws URISyntaxException, IOException, JSONException
   {
     return doPost(data.toString(2), Collections.<String, String>emptyMap());
   }
 
-  public JSONObject doPost(JSONObject data, List<NameValuePair> queryParams)
+  public JSONRequestResponse doPost(JSONObject data, List<NameValuePair> queryParams)
     throws URISyntaxException, IOException, JSONException
   {
     return doPost(data.toString(2), Collections.<String, String>emptyMap(), queryParams);
   }
 
-  public JSONObject doPost(String data)
+  public JSONRequestResponse doPost(String data)
     throws URISyntaxException, IOException, JSONException
   {
     return doPost(data, Collections.<String, String>emptyMap());
   }
 
-  public JSONObject doPost(String data, Map<String,String> headers)
+  public JSONRequestResponse doPost(String data, Map<String,String> headers)
     throws URISyntaxException, IOException, JSONException
   {
     return doPost(data, headers, Collections.<NameValuePair>emptyList());
   }
 
-  public JSONObject doPost(String data, Map<String,String> headers, List<NameValuePair> queryParams)
+  public JSONRequestResponse doPost(String data, Map<String,String> headers, List<NameValuePair> queryParams)
     throws URISyntaxException, IOException, JSONException
   {
     URI requestURI = buildRequestURI(queryParams);
     HttpResponse response = makePostRequest(requestURI, data, headers);
-    JSONObject result = transformResponseToJSONObject(response);
-    return result;
+    return new JSONRequestResponse(transformResponseToJSONObject(response), response);
   }
 
   public URI buildRequestURI()
@@ -437,6 +561,7 @@ public class HttpJSONClient
     return response;
   }
 
+  // POST HELPERS
   private HttpResponse makePostRequest(URI uri, List<NameValuePair> nameValuePairs)
       throws IOException
   {
@@ -460,22 +585,69 @@ public class HttpJSONClient
   private HttpResponse makePostRequest(URI uri, HttpEntity entity, Map<String,String> headers)
       throws IOException
   {
-    HttpPost httppost = new HttpPost(uri);
-    httppost.setEntity(entity);
+    HttpPost request = new HttpPost(uri);
+    request.setEntity(entity);
+    return makeHttpRequest(request, headers);
+  }
 
+  // PUT HELPERS
+
+/*
+  private HttpResponse makePutRequest(URI uri, List<NameValuePair> nameValuePairs)
+    throws IOException
+  {
+    return makePutRequest(uri, nameValuePairs, new HashMap<String, String>());
+  }
+
+  private HttpResponse makePutRequest(URI uri, List<NameValuePair> nameValuePairs, Map<String,String> headers)
+    throws IOException
+  {
+    return makePutRequest(uri, new UrlEncodedFormEntity(nameValuePairs), headers);
+  }
+*/
+  private HttpResponse makePutRequest(URI uri, String data, Map<String,String> headers)
+    throws IOException
+  {
+    StringEntity se = new StringEntity(data, HTTP.UTF_8);
+    se.setContentEncoding("UTF-8");
+    return makePutRequest(uri, se, headers);
+  }
+
+  private HttpResponse makePutRequest(URI uri, HttpEntity entity, Map<String,String> headers)
+    throws IOException
+  {
+    HttpPut request = new HttpPut(uri);
+    request.setEntity(entity);
+    return makeHttpRequest(request, headers);
+  }
+
+  // COMMON REQUEST MAKER
+  private HttpResponse makeHttpRequest(
+    HttpRequestBase request,
+    Map<String,String> headers)
+      throws IOException
+  {
     for (String key : headers.keySet())
     {
-      httppost.setHeader(key, headers.get(key));
+      request.setHeader(key, headers.get(key));
     }
 
-    HttpResponse response = _httpclient.execute(httppost);
-    if(response.getStatusLine().getStatusCode() == 400) {
-    	throw new IOException("Bad Request");
+    HttpResponse response = _httpclient.execute(request);
+    int statusCode = response.getStatusLine().getStatusCode();
+    if(statusCode == 400) {
+      throw new IOException("Bad Request");
     }
-    HttpEntity responseEntity = response.getEntity();
-    if (responseEntity == null)
+    else if (statusCode == 204 || statusCode == 304)
     {
-      throw new IOException("failed to complete request");
+      // nothing
+    }
+    else
+    {
+      HttpEntity responseEntity = response.getEntity();
+      if (responseEntity == null)
+      {
+        throw new IOException("failed to complete request");
+      }
     }
 
     return response;
@@ -523,6 +695,13 @@ public class HttpJSONClient
   public static JSONObject transformResponseToJSONObject(HttpResponse response)
       throws IOException, JSONException
   {
+    HttpEntity entity = response.getEntity();
+
+    if (entity == null)
+    {
+      return new JSONObject();
+    }
+
     JSONObject result;
     InputStream is = null;
 
@@ -542,9 +721,13 @@ public class HttpJSONClient
           result = new JSONObject();
           result.put("elements", new JSONArray(rawJSON));
         }
-        else
+        else if (rawJSON.startsWith("{"))
         {
           result = new JSONObject(rawJSON);
+        }
+        else
+        {
+          throw new RuntimeException("error: " + rawJSON);
         }
       }
 
